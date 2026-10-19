@@ -259,23 +259,44 @@ impl LcirProgram {
     pub fn validate(&self) -> Result<()> {
         let block_count = self.blocks.len();
         for block in &self.blocks {
+            // A `BlockId` is a position in `self.blocks` — `LcirBuilder::current`
+            // indexes the vector with it — so "target exists" means "in range".
+            let out_of_range = |target: BlockId| target.0 as usize >= block_count;
+            let from = block.id.0;
             match &block.terminator {
-                Terminator::Jump(target)
-                | Terminator::Branch {
-                    then_target: target,
-                    ..
-                } if target.0 as usize >= block_count => {
-                    return Err(GuardError::Validation(format!(
-                        "block {} jumps to non-existent block {}",
-                        block.id.0, target.0
-                    )));
+                Terminator::Jump(target) => {
+                    if out_of_range(*target) {
+                        return Err(GuardError::Validation(format!(
+                            "block {} jumps to non-existent block {}",
+                            from, target.0
+                        )));
+                    }
                 }
-                // NOTE: `Terminator::Branch` is matched unconditionally by the arm
-                // above, so no second `Branch` arm can ever be reached here. That
-                // means `else_target` is NOT bounds-checked by this validator.
-                // Fixing that is a behavioural change and is deliberately left to
-                // its own PR; this cleanup only removes provably dead code.
-                _ => {}
+                // `then_target` and `else_target` are checked together, in one
+                // arm, deliberately. Splitting them across two arms is what let
+                // `else_target` go unchecked: the first arm matches every
+                // `Branch` value unconditionally, so it shadows the second and
+                // the second can never run. Nested checks cannot be disabled by
+                // arm order.
+                Terminator::Branch {
+                    then_target,
+                    else_target,
+                    ..
+                } => {
+                    if out_of_range(*then_target) {
+                        return Err(GuardError::Validation(format!(
+                            "block {} jumps to non-existent block {}",
+                            from, then_target.0
+                        )));
+                    }
+                    if out_of_range(*else_target) {
+                        return Err(GuardError::Validation(format!(
+                            "block {} branches to non-existent block {}",
+                            from, else_target.0
+                        )));
+                    }
+                }
+                Terminator::Halt { .. } | Terminator::Return => {}
             }
         }
         Ok(())

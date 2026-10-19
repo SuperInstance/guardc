@@ -234,149 +234,138 @@ fn inv(name: &str, when: Option<Expr>, ensure: Expr) -> CirInvariant {
 ///  * `lower_invariant` — a `when` guard mints `Branch { else_target: next_block }`
 ///  * `lower_expr_to_var` on `Expr::If` — mints `Branch { else_target: else_block }`
 fn corpus() -> Vec<(&'static str, CirModule)> {
-    let mut out: Vec<(&'static str, CirModule)> = vec![];
-
-    // 1. Bare invariant, no guard: no Branch at all.
-    out.push((
-        "bare",
-        module_with(vec![inv("bare", None, cmp(BinOp::Lt, one(), two()))]),
-    ));
-
-    // 2. `when` guard -> the `lower_invariant` Branch.
-    out.push((
-        "when_guard",
-        module_with(vec![inv(
-            "guarded",
-            Some(truth()),
-            cmp(BinOp::Lt, one(), two()),
-        )]),
-    ));
-
-    // 3. Five `when`-guarded invariants chained: five Branches, each with a
-    //    distinct `else_target`.
-    out.push((
-        "many_when_guards",
-        module_with(vec![
-            inv("g1", Some(truth()), cmp(BinOp::Lt, one(), two())),
-            inv("g2", Some(truth()), cmp(BinOp::Gt, two(), one())),
-            inv("g3", Some(truth()), cmp(BinOp::Eq, one(), two())),
-            inv("g4", Some(truth()), cmp(BinOp::Lte, one(), two())),
-            inv("g5", Some(truth()), cmp(BinOp::Gte, one(), two())),
-        ]),
-    ));
-
-    // 4. `Expr::If` -> the `lower_expr_to_var` Branch.
-    out.push((
-        "expr_if",
-        module_with(vec![inv(
-            "if_inv",
-            None,
-            cmp(
-                BinOp::Eq,
-                one(),
-                Expr::If {
-                    cond: Box::new(truth()),
-                    then_branch: Box::new(one()),
-                    else_branch: Box::new(two()),
-                    ty: real_ty(),
-                },
-            ),
-        )]),
-    ));
-
-    // 5. `Expr::If` inside a `when` guard: both Branch sites at once.
-    out.push((
-        "if_inside_when",
-        module_with(vec![inv(
-            "nested",
-            Some(Expr::If {
-                cond: Box::new(truth()),
-                then_branch: Box::new(truth()),
-                else_branch: Box::new(truth()),
-                ty: bool_ty(),
-            }),
-            cmp(BinOp::Lt, one(), two()),
-        )]),
-    ));
-
-    // 6. Quantifier expansion over an interval domain (unrolled body).
-    out.push((
-        "forall_interval",
-        module_with(vec![inv(
-            "quantified",
-            Some(truth()),
-            Expr::Forall {
-                var: VarId(1),
-                domain: Domain::Interval { low: 0, high: 7 },
-                body: Box::new(cmp(BinOp::Lt, one(), two())),
-                ty: bool_ty(),
-            },
-        )]),
-    ));
-
-    // 7. Quantifier expansion over an enum domain, unguarded.
-    out.push((
-        "exists_enum",
-        module_with(vec![inv(
-            "enum_quantified",
-            None,
-            Expr::Exists {
-                var: VarId(1),
-                domain: Domain::Enum(vec!["a".into(), "b".into(), "c".into()]),
-                body: Box::new(cmp(BinOp::Gt, two(), one())),
-                ty: bool_ty(),
-            },
-        )]),
-    ));
-
-    // 8. Temporal lowering: `RateOf` / `Delta` (no buffer declared, so the
-    //    lowerer falls back to the variable's own slot).
-    out.push((
-        "temporal",
-        module_with(vec![inv(
-            "temporal_inv",
-            Some(truth()),
-            cmp(
-                BinOp::Lt,
-                Expr::RateOf(VarId(0), real_ty()),
-                Expr::Delta(VarId(0), real_ty()),
-            ),
-        )]),
-    ));
-
-    // 9. Guard, quantifier, `Expr::If` and a bare invariant all at once.
-    out.push((
-        "kitchen_sink",
-        module_with(vec![
-            inv("a", Some(truth()), cmp(BinOp::Lt, one(), two())),
-            inv(
-                "b",
+    vec![
+        // 1. Bare invariant, no guard: no Branch at all.
+        (
+            "bare",
+            module_with(vec![inv("bare", None, cmp(BinOp::Lt, one(), two()))]),
+        ),
+        // 2. `when` guard -> the `lower_invariant` Branch.
+        (
+            "when_guard",
+            module_with(vec![inv(
+                "guarded",
                 Some(truth()),
-                Expr::Binary {
-                    op: BinOp::And,
-                    left: Box::new(cmp(BinOp::Eq, one(), two())),
-                    right: Box::new(Expr::Exists {
-                        var: VarId(1),
-                        domain: Domain::Array { size: 4 },
-                        body: Box::new(Expr::If {
-                            cond: Box::new(truth()),
-                            then_branch: Box::new(truth()),
-                            else_branch: Box::new(truth()),
+                cmp(BinOp::Lt, one(), two()),
+            )]),
+        ),
+        // 3. Five `when`-guarded invariants chained: five Branches, each with a
+        //    distinct `else_target`.
+        (
+            "many_when_guards",
+            module_with(vec![
+                inv("g1", Some(truth()), cmp(BinOp::Lt, one(), two())),
+                inv("g2", Some(truth()), cmp(BinOp::Gt, two(), one())),
+                inv("g3", Some(truth()), cmp(BinOp::Eq, one(), two())),
+                inv("g4", Some(truth()), cmp(BinOp::Lte, one(), two())),
+                inv("g5", Some(truth()), cmp(BinOp::Gte, one(), two())),
+            ]),
+        ),
+        // 4. `Expr::If` -> the `lower_expr_to_var` Branch.
+        (
+            "expr_if",
+            module_with(vec![inv(
+                "if_inv",
+                None,
+                cmp(
+                    BinOp::Eq,
+                    one(),
+                    Expr::If {
+                        cond: Box::new(truth()),
+                        then_branch: Box::new(one()),
+                        else_branch: Box::new(two()),
+                        ty: real_ty(),
+                    },
+                ),
+            )]),
+        ),
+        // 5. `Expr::If` inside a `when` guard: both Branch sites at once.
+        (
+            "if_inside_when",
+            module_with(vec![inv(
+                "nested",
+                Some(Expr::If {
+                    cond: Box::new(truth()),
+                    then_branch: Box::new(truth()),
+                    else_branch: Box::new(truth()),
+                    ty: bool_ty(),
+                }),
+                cmp(BinOp::Lt, one(), two()),
+            )]),
+        ),
+        // 6. Quantifier expansion over an interval domain (unrolled body).
+        (
+            "forall_interval",
+            module_with(vec![inv(
+                "quantified",
+                Some(truth()),
+                Expr::Forall {
+                    var: VarId(1),
+                    domain: Domain::Interval { low: 0, high: 7 },
+                    body: Box::new(cmp(BinOp::Lt, one(), two())),
+                    ty: bool_ty(),
+                },
+            )]),
+        ),
+        // 7. Quantifier expansion over an enum domain, unguarded.
+        (
+            "exists_enum",
+            module_with(vec![inv(
+                "enum_quantified",
+                None,
+                Expr::Exists {
+                    var: VarId(1),
+                    domain: Domain::Enum(vec!["a".into(), "b".into(), "c".into()]),
+                    body: Box::new(cmp(BinOp::Gt, two(), one())),
+                    ty: bool_ty(),
+                },
+            )]),
+        ),
+        // 8. Temporal lowering: `RateOf` / `Delta` (no buffer declared, so the
+        //    lowerer falls back to the variable's own slot).
+        (
+            "temporal",
+            module_with(vec![inv(
+                "temporal_inv",
+                Some(truth()),
+                cmp(
+                    BinOp::Lt,
+                    Expr::RateOf(VarId(0), real_ty()),
+                    Expr::Delta(VarId(0), real_ty()),
+                ),
+            )]),
+        ),
+        // 9. Guard, quantifier, `Expr::If` and a bare invariant all at once.
+        (
+            "kitchen_sink",
+            module_with(vec![
+                inv("a", Some(truth()), cmp(BinOp::Lt, one(), two())),
+                inv(
+                    "b",
+                    Some(truth()),
+                    Expr::Binary {
+                        op: BinOp::And,
+                        left: Box::new(cmp(BinOp::Eq, one(), two())),
+                        right: Box::new(Expr::Exists {
+                            var: VarId(1),
+                            domain: Domain::Array { size: 4 },
+                            body: Box::new(Expr::If {
+                                cond: Box::new(truth()),
+                                then_branch: Box::new(truth()),
+                                else_branch: Box::new(truth()),
+                                ty: bool_ty(),
+                            }),
                             ty: bool_ty(),
                         }),
                         ty: bool_ty(),
-                    }),
-                    ty: bool_ty(),
-                },
-            ),
-            inv("c", None, cmp(BinOp::Lt, one(), two())),
-        ]),
-    ));
-
-    // 10. An empty module: `blocks` is just the loop skeleton.
-    out.push(("empty", module_with(vec![])));
-
-    out
+                    },
+                ),
+                inv("c", None, cmp(BinOp::Lt, one(), two())),
+            ]),
+        ),
+        // 10. An empty module: `blocks` is just the loop skeleton.
+        ("empty", module_with(vec![])),
+    ]
 }
 
 /// Every program the lowerer emits must still validate after the tightening,

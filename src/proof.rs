@@ -5,7 +5,7 @@
 //!   - Per-obligation verification conditions in SMT-LIB format
 //!   - Solver results, counterexamples, and a Merkle root
 
-use crate::cir::{CirModule, ConstValue, Expr, TypeKind, VarId};
+use crate::cir::{CirModule, ConstValue, Expr};
 use crate::error::{GuardError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -119,11 +119,7 @@ pub struct ProofGen<'a> {
 }
 
 impl<'a> ProofGen<'a> {
-    pub fn new(
-        module: &'a CirModule,
-        source_text: &'a str,
-        bytecode_bytes: &'a [u8],
-    ) -> Self {
+    pub fn new(module: &'a CirModule, source_text: &'a str, bytecode_bytes: &'a [u8]) -> Self {
         Self {
             module,
             source_text,
@@ -233,9 +229,12 @@ fn has_reals(expr: &Expr) -> bool {
         Expr::Const(ConstValue::Real(_)) => true,
         Expr::Unary { operand, .. } => has_reals(operand),
         Expr::Binary { left, right, .. } => has_reals(left) || has_reals(right),
-        Expr::If { cond, then_branch, else_branch, .. } => {
-            has_reals(cond) || has_reals(then_branch) || has_reals(else_branch)
-        }
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => has_reals(cond) || has_reals(then_branch) || has_reals(else_branch),
         Expr::Forall { body, .. } | Expr::Exists { body, .. } => has_reals(body),
         _ => false,
     }
@@ -246,18 +245,18 @@ fn has_integers(expr: &Expr) -> bool {
         Expr::Const(ConstValue::Integer(_)) => true,
         Expr::Unary { operand, .. } => has_integers(operand),
         Expr::Binary { left, right, .. } => has_integers(left) || has_integers(right),
-        Expr::If { cond, then_branch, else_branch, .. } => {
-            has_integers(cond) || has_integers(then_branch) || has_integers(else_branch)
-        }
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => has_integers(cond) || has_integers(then_branch) || has_integers(else_branch),
         Expr::Forall { body, .. } | Expr::Exists { body, .. } => has_integers(body),
         _ => false,
     }
 }
 
-fn expr_to_smt(
-    expr: &Expr,
-    _symtab: &crate::cir::SymbolTable,
-) -> Result<String> {
+fn expr_to_smt(expr: &Expr, _symtab: &crate::cir::SymbolTable) -> Result<String> {
     fn go(expr: &Expr, out: &mut String) -> Result<()> {
         match expr {
             Expr::Const(c) => match c {
@@ -271,16 +270,14 @@ fn expr_to_smt(
                     crate::cir::UnOp::Neg => "-",
                     crate::cir::UnOp::Abs => "abs",
                     crate::cir::UnOp::Not => "not",
-                    _ => return Err(GuardError::ProofFailed {
-                        obligation: "smt".into(),
-                        reason: format!("unsupported unary op {:?}", op),
-                    }),
                 };
                 out.push_str(&format!("({} ", sop));
                 go(operand, out)?;
                 out.push(')');
             }
-            Expr::Binary { op, left, right, .. } => {
+            Expr::Binary {
+                op, left, right, ..
+            } => {
                 let sop = match op {
                     crate::cir::BinOp::Add => "+",
                     crate::cir::BinOp::Sub => "-",
@@ -303,7 +300,12 @@ fn expr_to_smt(
                 go(right, out)?;
                 out.push(')');
             }
-            Expr::If { cond, then_branch, else_branch, .. } => {
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 out.push_str("(ite ");
                 go(cond, out)?;
                 out.push(' ');
@@ -397,5 +399,11 @@ fn format_iso_now() -> String {
     let hours = rem / 3600;
     let mins = (rem % 3600) / 60;
     let secs = rem % 60;
-    format!("1970-01-{:02}T{:02}:{:02}:{:02}Z", days + 1, hours, mins, secs)
+    format!(
+        "1970-01-{:02}T{:02}:{:02}:{:02}Z",
+        days + 1,
+        hours,
+        mins,
+        secs
+    )
 }

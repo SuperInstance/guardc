@@ -7,11 +7,9 @@
 //!   128–223: temporal history buffers
 //!   224–255: scratch / locals
 
-use crate::cir::{ConstValue, TypeKind, VarKind};
+use crate::cir::{ConstValue, TypeKind};
 use crate::error::{GuardError, Result, Span};
-use crate::lcir::{
-    AtomicOp, BasicBlock, BlockId, HaltReason, LcirProgram, Stmt, Terminator,
-};
+use crate::lcir::{AtomicOp, BasicBlock, BlockId, HaltReason, LcirProgram, Stmt, Terminator};
 use flux_isa::bytecode::FluxBytecode;
 use flux_isa::instruction::{FluxInstruction, InstructionMetadata};
 use flux_isa::opcode::FluxOpcode;
@@ -47,10 +45,8 @@ impl CodegenCtx {
     }
 
     pub fn emit_op_slot(&mut self, op: FluxOpcode, slot: u8) {
-        self.bytecode.push(FluxInstruction::with_operands(
-            op,
-            vec![slot as f64],
-        ));
+        self.bytecode
+            .push(FluxInstruction::with_operands(op, vec![slot as f64]));
     }
 
     pub fn emit_push(&mut self, value: f64) {
@@ -62,6 +58,12 @@ impl CodegenCtx {
 
     pub fn here(&self) -> usize {
         self.bytecode.instructions.len()
+    }
+}
+
+impl Default for CodegenCtx {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -95,9 +97,9 @@ pub fn codegen(program: &LcirProgram) -> Result<FluxBytecode> {
         ctx.emit_op(FluxOpcode::Halt);
     }
 
-    ctx.bytecode.validate().map_err(|e| {
-        GuardError::Validation(format!("bytecode validation failed: {}", e))
-    })?;
+    ctx.bytecode
+        .validate()
+        .map_err(|e| GuardError::Validation(format!("bytecode validation failed: {}", e)))?;
 
     Ok(ctx.bytecode)
 }
@@ -120,7 +122,12 @@ fn gen_stmt(ctx: &mut CodegenCtx, stmt: &Stmt) -> Result<()> {
             ctx.current_span = span.clone();
             gen_atomic_op(ctx, op)?;
         }
-        Stmt::LoadState { dest: _, slot, ty, span } => {
+        Stmt::LoadState {
+            dest: _,
+            slot,
+            ty,
+            span,
+        } => {
             ctx.current_span = span.clone();
             // Load state from its slot, optionally converting type.
             ctx.emit_op_slot(FluxOpcode::Load, *slot);
@@ -141,13 +148,21 @@ fn gen_stmt(ctx: &mut CodegenCtx, stmt: &Stmt) -> Result<()> {
                 ConstValue::Bool(b) => ctx.emit_push(if *b { 1.0 } else { 0.0 }),
             }
         }
-        Stmt::Pop { dest: _, ty: _, span } => {
+        Stmt::Pop {
+            dest: _,
+            ty: _,
+            span,
+        } => {
             ctx.current_span = span.clone();
             // Pop top of stack into a local slot.
             // In the current design, Pop is handled via Store after an operation.
             ctx.emit_op(FluxOpcode::Pop);
         }
-        Stmt::Assert { cond: _, invariant_name, span } => {
+        Stmt::Assert {
+            cond: _,
+            invariant_name,
+            span,
+        } => {
             ctx.current_span = span.clone();
             // The boolean result is already on the stack from the preceding comparison.
             // Assert consumes it.
@@ -195,7 +210,7 @@ fn gen_atomic_op(ctx: &mut CodegenCtx, op: &AtomicOp) -> Result<()> {
             ctx.emit_op(FluxOpcode::Push);
             ctx.emit_push(0.0);
             ctx.emit_op(FluxOpcode::Gte); // x >= 0 ?
-            // Simplified: just push the value (placeholder for full abs)
+                                          // Simplified: just push the value (placeholder for full abs)
         }
         AtomicOp::Not(a) => {
             ctx.emit_op_slot(FluxOpcode::Load, a.0 as u8);
@@ -331,22 +346,20 @@ fn gen_terminator(ctx: &mut CodegenCtx, term: &Terminator) -> Result<()> {
                 vec![0.0], // patched later
             ));
         }
-        Terminator::Halt { reason } => {
-            match reason {
-                HaltReason::ConstraintViolation { invariant } => {
-                    let meta = InstructionMetadata::new()
-                        .with_label(format!("violation:{}", invariant));
-                    ctx.emit(FluxInstruction::with_metadata(
-                        FluxOpcode::Halt,
-                        vec![],
-                        meta,
-                    ));
-                }
-                HaltReason::Normal => {
-                    ctx.emit_op(FluxOpcode::Halt);
-                }
+        Terminator::Halt { reason } => match reason {
+            HaltReason::ConstraintViolation { invariant } => {
+                let meta =
+                    InstructionMetadata::new().with_label(format!("violation:{}", invariant));
+                ctx.emit(FluxInstruction::with_metadata(
+                    FluxOpcode::Halt,
+                    vec![],
+                    meta,
+                ));
             }
-        }
+            HaltReason::Normal => {
+                ctx.emit_op(FluxOpcode::Halt);
+            }
+        },
         Terminator::Return => {
             ctx.emit_op(FluxOpcode::Return);
         }

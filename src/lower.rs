@@ -9,13 +9,11 @@
 //!   5. **Basic-block Generation** — Emit explicit CFG with jumps and branches.
 
 use crate::cir::{
-    BinOp, BufferId, CirDerived, CirInvariant, CirModule, CirType, ConstValue, Expr, TypeKind,
-    Unit, VarId, VarInfo, VarKind,
+    BinOp, BufferId, CirInvariant, CirModule, CirType, ConstValue, Expr, TypeKind, Unit, VarId,
+    VarKind,
 };
 use crate::error::{GuardError, Result, Span};
-use crate::lcir::{
-    AtomicOp, BasicBlock, BlockId, HaltReason, LcirBuilder, LcirProgram, Stmt, Terminator,
-};
+use crate::lcir::{AtomicOp, HaltReason, LcirBuilder, LcirProgram, Stmt, Terminator};
 use indexmap::IndexMap;
 
 // ---------------------------------------------------------------------------
@@ -80,7 +78,7 @@ pub fn lower_module(module: &CirModule) -> Result<LcirProgram> {
     let mut ctx = LowerCtx::new(module);
 
     // Allocate slots for all state variables and constants.
-    for (id, info) in &module.symbol_table.vars {
+    for (id, _info) in &module.symbol_table.vars {
         let lcir_id = ctx.map_var(*id);
         ctx.builder.allocate_slot(lcir_id);
     }
@@ -147,8 +145,8 @@ fn lower_invariant(ctx: &mut LowerCtx, inv: &CirInvariant) -> Result<()> {
         None
     };
 
-    let check_block = ctx.builder.fresh_block(&format!("inv_{}", inv.name));
-    let next_block = ctx.builder.fresh_block(&format!("inv_{}_done", inv.name));
+    let check_block = ctx.builder.fresh_block(format!("inv_{}", inv.name));
+    let next_block = ctx.builder.fresh_block(format!("inv_{}_done", inv.name));
 
     if let Some(gv) = guard_var {
         let current = ctx.builder.current_block;
@@ -212,11 +210,17 @@ pub fn lower_expr_to_var(ctx: &mut LowerCtx, expr: &Expr) -> Result<VarId> {
                 crate::cir::UnOp::Abs => AtomicOp::Abs(src),
                 crate::cir::UnOp::Not => AtomicOp::Not(src),
             };
-            ctx.builder.emit(Stmt::Assign { dest, op: atomic, span });
+            ctx.builder.emit(Stmt::Assign {
+                dest,
+                op: atomic,
+                span,
+            });
             Ok(dest)
         }
 
-        Expr::Binary { op, left, right, .. } => {
+        Expr::Binary {
+            op, left, right, ..
+        } => {
             let l = lower_expr_to_var(ctx, left)?;
             let r = lower_expr_to_var(ctx, right)?;
             let dest = ctx.fresh_tmp(ty, "b");
@@ -236,11 +240,20 @@ pub fn lower_expr_to_var(ctx: &mut LowerCtx, expr: &Expr) -> Result<VarId> {
                 BinOp::Or => AtomicOp::Or(l, r),
                 BinOp::Implies => AtomicOp::Implies(l, r),
             };
-            ctx.builder.emit(Stmt::Assign { dest, op: atomic, span });
+            ctx.builder.emit(Stmt::Assign {
+                dest,
+                op: atomic,
+                span,
+            });
             Ok(dest)
         }
 
-        Expr::If { cond, then_branch, else_branch, .. } => {
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             let cond_var = lower_expr_to_var(ctx, cond)?;
             let then_block = ctx.builder.fresh_block("if_then");
             let else_block = ctx.builder.fresh_block("if_else");
@@ -301,7 +314,12 @@ pub fn lower_expr_to_var(ctx: &mut LowerCtx, expr: &Expr) -> Result<VarId> {
                 .buffer_slots
                 .iter()
                 .find(|(buf_id, &_slot)| {
-                    ctx.module.symbol_table.buffers.get(*buf_id).map(|b| b.var == *var).unwrap_or(false)
+                    ctx.module
+                        .symbol_table
+                        .buffers
+                        .get(*buf_id)
+                        .map(|b| b.var == *var)
+                        .unwrap_or(false)
                 })
                 .map(|(_, slot)| *slot)
                 .unwrap_or_else(|| ctx.slot_for(*var));
@@ -322,14 +340,22 @@ pub fn lower_expr_to_var(ctx: &mut LowerCtx, expr: &Expr) -> Result<VarId> {
                 .buffer_slots
                 .iter()
                 .find(|(buf_id, &_slot)| {
-                    ctx.module.symbol_table.buffers.get(*buf_id).map(|b| b.var == *var).unwrap_or(false)
+                    ctx.module
+                        .symbol_table
+                        .buffers
+                        .get(*buf_id)
+                        .map(|b| b.var == *var)
+                        .unwrap_or(false)
                 })
                 .map(|(_, slot)| *slot)
                 .unwrap_or_else(|| ctx.slot_for(*var));
             let dt = ctx.module.sample_period_ms / 1000.0;
             ctx.builder.emit(Stmt::Assign {
                 dest,
-                op: AtomicOp::RateOf { buffer: buf_slot, dt },
+                op: AtomicOp::RateOf {
+                    buffer: buf_slot,
+                    dt,
+                },
                 span,
             });
             Ok(dest)
@@ -341,7 +367,12 @@ pub fn lower_expr_to_var(ctx: &mut LowerCtx, expr: &Expr) -> Result<VarId> {
                 .buffer_slots
                 .iter()
                 .find(|(buf_id, &_slot)| {
-                    ctx.module.symbol_table.buffers.get(*buf_id).map(|b| b.var == *var).unwrap_or(false)
+                    ctx.module
+                        .symbol_table
+                        .buffers
+                        .get(*buf_id)
+                        .map(|b| b.var == *var)
+                        .unwrap_or(false)
                 })
                 .map(|(_, slot)| *slot)
                 .unwrap_or_else(|| ctx.slot_for(*var));
@@ -354,12 +385,12 @@ pub fn lower_expr_to_var(ctx: &mut LowerCtx, expr: &Expr) -> Result<VarId> {
         }
 
         // Quantifiers — eliminate by expansion over finite domains
-        Expr::Forall { var, domain, body, .. } => {
-            lower_forall(ctx, *var, domain, body)
-        }
-        Expr::Exists { var, domain, body, .. } => {
-            lower_exists(ctx, *var, domain, body)
-        }
+        Expr::Forall {
+            var, domain, body, ..
+        } => lower_forall(ctx, *var, domain, body),
+        Expr::Exists {
+            var, domain, body, ..
+        } => lower_exists(ctx, *var, domain, body),
 
         // Simple temporal: always P → P ∧ old(always P) unrolled
         Expr::Always(inner, _) => {
@@ -367,12 +398,8 @@ pub fn lower_expr_to_var(ctx: &mut LowerCtx, expr: &Expr) -> Result<VarId> {
             // Here we simplify to just the inner expression (single-step).
             lower_expr_to_var(ctx, inner)
         }
-        Expr::Next(inner, _) => {
-            lower_expr_to_var(ctx, inner)
-        }
-        Expr::Eventually(inner, _) => {
-            lower_expr_to_var(ctx, inner)
-        }
+        Expr::Next(inner, _) => lower_expr_to_var(ctx, inner),
+        Expr::Eventually(inner, _) => lower_expr_to_var(ctx, inner),
         Expr::Until { left, right, .. } => {
             // Simplified: emit (left or right) for single-step
             let l = lower_expr_to_var(ctx, left)?;
@@ -407,12 +434,12 @@ pub fn lower_expr_to_var(ctx: &mut LowerCtx, expr: &Expr) -> Result<VarId> {
             lower_expr_to_var(ctx, body)
         }
 
-        Expr::Index { .. } => {
-            Err(GuardError::Lowering("array index lowering not yet implemented".into()))
-        }
-        Expr::Field { .. } => {
-            Err(GuardError::Lowering("field access lowering not yet implemented".into()))
-        }
+        Expr::Index { .. } => Err(GuardError::Lowering(
+            "array index lowering not yet implemented".into(),
+        )),
+        Expr::Field { .. } => Err(GuardError::Lowering(
+            "field access lowering not yet implemented".into(),
+        )),
     }
 }
 
@@ -628,7 +655,11 @@ fn emit_init(ctx: &mut LowerCtx) -> Result<()> {
             let lcir_id = ctx.map_var(*id);
             let slot = ctx.builder.allocate_slot(lcir_id);
             // In a full implementation, we'd emit PushConst + Store here.
-            ctx.builder.emit(Stmt::Store { src: lcir_id, slot, span: span.clone() });
+            ctx.builder.emit(Stmt::Store {
+                src: lcir_id,
+                slot,
+                span: span.clone(),
+            });
         }
     }
     Ok(())

@@ -37,8 +37,14 @@ pub enum TypeDesc {
     Integer,
     Boolean,
     Enum(QualifiedId),
-    Array { low: Quantity, high: Quantity, of: Box<TypeDesc> },
-    Record { fields: Vec<Field> },
+    Array {
+        low: Quantity,
+        high: Quantity,
+        of: Box<TypeDesc>,
+    },
+    Record {
+        fields: Vec<Field>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,23 +80,75 @@ pub enum Expr {
     Ident(QualifiedId),
     Quantity(Quantity),
     Bool(bool),
-    Unary { op: UnaryOp, expr: Box<Expr>, span: Span },
-    Binary { op: BinOp, left: Box<Expr>, right: Box<Expr>, span: Span },
-    If { cond: Box<Expr>, then_branch: Box<Expr>, else_branch: Box<Expr>, span: Span },
-    Call { func: Ident, args: Vec<Expr>, span: Span },
-    ArrayIndex { array: Ident, index: Box<Expr>, span: Span },
-    FieldAccess { record: Ident, field: Ident, span: Span },
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+        span: Span,
+    },
+    Binary {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+    },
+    If {
+        cond: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+        span: Span,
+    },
+    Call {
+        func: Ident,
+        args: Vec<Expr>,
+        span: Span,
+    },
+    ArrayIndex {
+        array: Ident,
+        index: Box<Expr>,
+        span: Span,
+    },
+    FieldAccess {
+        record: Ident,
+        field: Ident,
+        span: Span,
+    },
     // Quantified expressions (sugar before lowering)
-    Forall { var: Ident, domain: DomainRef, body: Box<Expr>, span: Span },
-    Exists { var: Ident, domain: DomainRef, body: Box<Expr>, span: Span },
+    Forall {
+        var: Ident,
+        domain: DomainRef,
+        body: Box<Expr>,
+        span: Span,
+    },
+    Exists {
+        var: Ident,
+        domain: DomainRef,
+        body: Box<Expr>,
+        span: Span,
+    },
     // Temporal operators
     Always(Box<Expr>, Span),
     Eventually(Box<Expr>, Span),
     Next(Box<Expr>, Span),
-    Until { left: Box<Expr>, right: Box<Expr>, span: Span },
-    Since { left: Box<Expr>, right: Box<Expr>, span: Span },
-    For { duration: Quantity, body: Box<Expr>, span: Span },
-    After { duration: Quantity, body: Box<Expr>, span: Span },
+    Until {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+    },
+    Since {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+    },
+    For {
+        duration: Quantity,
+        body: Box<Expr>,
+        span: Span,
+    },
+    After {
+        duration: Quantity,
+        body: Box<Expr>,
+        span: Span,
+    },
     // Special accessors
     Old(Box<Expr>, Span),
     RateOf(Box<Expr>, Span),
@@ -225,7 +283,7 @@ pub struct ProofDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProofStep {
     Tactic { name: Ident },
-    Lemma { name: Ident, expr: Expr },
+    Lemma { name: Ident, expr: Box<Expr> },
     ReduceTo(Ident),
     Certificate(CertConfig),
 }

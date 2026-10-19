@@ -6,11 +6,20 @@ use guardc::error::Span;
 
 // Helper: create a zero span
 fn span() -> Span {
-    Span { file: String::new(), start_line: 0, start_col: 0, end_line: 0, end_col: 0 }
+    Span {
+        file: String::new(),
+        start_line: 0,
+        start_col: 0,
+        end_line: 0,
+        end_col: 0,
+    }
 }
 
 fn ident(name: &str) -> ast::Ident {
-    ast::Ident { name: name.to_string(), span: span() }
+    ast::Ident {
+        name: name.to_string(),
+        span: span(),
+    }
 }
 
 #[test]
@@ -70,8 +79,11 @@ fn test_cir_unit_system() {
     let length = cir::Unit::Base(cir::BaseDimension::Length, 1);
     let time = cir::Unit::Base(cir::BaseDimension::Time, 1);
     let dimensionless = cir::Unit::Dimensionless;
-    
-    assert!(matches!(length, cir::Unit::Base(cir::BaseDimension::Length, 1)));
+
+    assert!(matches!(
+        length,
+        cir::Unit::Base(cir::BaseDimension::Length, 1)
+    ));
     assert!(matches!(time, cir::Unit::Base(cir::BaseDimension::Time, 1)));
     assert!(matches!(dimensionless, cir::Unit::Dimensionless));
 }
@@ -79,9 +91,12 @@ fn test_cir_unit_system() {
 #[test]
 fn test_cir_const_values() {
     let int_val = cir::ConstValue::Integer(42);
+    // `3.14` stands in for a plain float literal; it is not an approximation
+    // of PI that any assertion depends on, so the lint does not apply.
+    #[allow(clippy::approx_constant)]
     let float_val = cir::ConstValue::Real(3.14);
     let bool_val = cir::ConstValue::Bool(true);
-    
+
     assert!(matches!(int_val, cir::ConstValue::Integer(42)));
     assert!(matches!(float_val, cir::ConstValue::Real(_)));
     assert!(matches!(bool_val, cir::ConstValue::Bool(true)));
@@ -91,29 +106,44 @@ fn test_cir_const_values() {
 fn test_cir_expr_construction() {
     let var = cir::Expr::Var(cir::VarId(0));
     let const_150 = cir::Expr::Const(cir::ConstValue::Integer(150));
-    let ty = cir::CirType { kind: cir::TypeKind::Boolean, unit: cir::Unit::Dimensionless };
-    
+    let ty = cir::CirType {
+        kind: cir::TypeKind::Boolean,
+        unit: cir::Unit::Dimensionless,
+    };
+
     let cmp = cir::Expr::Binary {
         op: cir::BinOp::Lte,
         left: Box::new(var),
         right: Box::new(const_150),
         ty,
     };
-    
-    assert!(matches!(cmp, cir::Expr::Binary { op: cir::BinOp::Lte, .. }));
+
+    assert!(matches!(
+        cmp,
+        cir::Expr::Binary {
+            op: cir::BinOp::Lte,
+            ..
+        }
+    ));
 }
 
 #[test]
 fn test_cir_binary_ops_complete() {
     // All 14 binary operators
     let _: Vec<cir::BinOp> = vec![
-        cir::BinOp::Eq, cir::BinOp::Neq,
-        cir::BinOp::Lt, cir::BinOp::Gt,
-        cir::BinOp::Lte, cir::BinOp::Gte,
-        cir::BinOp::And, cir::BinOp::Or,
+        cir::BinOp::Eq,
+        cir::BinOp::Neq,
+        cir::BinOp::Lt,
+        cir::BinOp::Gt,
+        cir::BinOp::Lte,
+        cir::BinOp::Gte,
+        cir::BinOp::And,
+        cir::BinOp::Or,
         cir::BinOp::Implies,
-        cir::BinOp::Add, cir::BinOp::Sub,
-        cir::BinOp::Mul, cir::BinOp::Div,
+        cir::BinOp::Add,
+        cir::BinOp::Sub,
+        cir::BinOp::Mul,
+        cir::BinOp::Div,
     ];
 }
 

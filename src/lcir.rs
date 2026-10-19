@@ -62,17 +62,34 @@ pub struct BasicBlock {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     /// Assign the result of an atomic expression to a variable.
-    Assign { dest: VarId, op: AtomicOp, span: Span },
+    Assign {
+        dest: VarId,
+        op: AtomicOp,
+        span: Span,
+    },
     /// Load a state variable from its memory slot.
-    LoadState { dest: VarId, slot: u8, ty: CirType, span: Span },
+    LoadState {
+        dest: VarId,
+        slot: u8,
+        ty: CirType,
+        span: Span,
+    },
     /// Store a local variable to a memory slot.
     Store { src: VarId, slot: u8, span: Span },
     /// Push a constant onto the evaluation stack.
     PushConst { value: ConstValue, span: Span },
     /// Pop the top of stack into a variable.
-    Pop { dest: VarId, ty: CirType, span: Span },
+    Pop {
+        dest: VarId,
+        ty: CirType,
+        span: Span,
+    },
     /// Assert that a boolean variable is true.
-    Assert { cond: VarId, invariant_name: String, span: Span },
+    Assert {
+        cond: VarId,
+        invariant_name: String,
+        span: Span,
+    },
     /// Trace / mark a source location.
     Trace { label: String, span: Span },
 }
@@ -128,7 +145,11 @@ pub enum Terminator {
     /// Unconditional jump to another block.
     Jump(BlockId),
     /// Conditional branch.
-    Branch { cond: VarId, then_target: BlockId, else_target: BlockId },
+    Branch {
+        cond: VarId,
+        then_target: BlockId,
+        else_target: BlockId,
+    },
     /// Halt the VM.
     Halt { reason: HaltReason },
     /// Return from a subroutine (used for loop bodies).
@@ -156,7 +177,8 @@ pub struct LcirBuilder {
 impl LcirBuilder {
     pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
         let entry = BlockId(0);
-        let mut builder = Self {
+
+        Self {
             program: LcirProgram {
                 name: name.into(),
                 version: version.into(),
@@ -176,11 +198,10 @@ impl LcirBuilder {
             current_block: entry,
             next_var: 1000, // Reserve 0–999 for CIR vars
             next_block: 1,
-        };
-        builder
+        }
     }
 
-    pub fn fresh_var(&mut self, ty: CirType, kind: VarKind, _name_hint: &str) -> VarId {
+    pub fn fresh_var(&mut self, _ty: CirType, _kind: VarKind, _name_hint: &str) -> VarId {
         let id = VarId(self.next_var);
         self.next_var += 1;
         id
@@ -239,22 +260,21 @@ impl LcirProgram {
         let block_count = self.blocks.len();
         for block in &self.blocks {
             match &block.terminator {
-                Terminator::Jump(target) | Terminator::Branch { then_target: target, .. } => {
-                    if target.0 as usize >= block_count {
-                        return Err(GuardError::Validation(format!(
-                            "block {} jumps to non-existent block {}",
-                            block.id.0, target.0
-                        )));
-                    }
+                Terminator::Jump(target)
+                | Terminator::Branch {
+                    then_target: target,
+                    ..
+                } if target.0 as usize >= block_count => {
+                    return Err(GuardError::Validation(format!(
+                        "block {} jumps to non-existent block {}",
+                        block.id.0, target.0
+                    )));
                 }
-                Terminator::Branch { else_target: target, .. } => {
-                    if target.0 as usize >= block_count {
-                        return Err(GuardError::Validation(format!(
-                            "block {} branches to non-existent block {}",
-                            block.id.0, target.0
-                        )));
-                    }
-                }
+                // NOTE: `Terminator::Branch` is matched unconditionally by the arm
+                // above, so no second `Branch` arm can ever be reached here. That
+                // means `else_target` is NOT bounds-checked by this validator.
+                // Fixing that is a behavioural change and is deliberately left to
+                // its own PR; this cleanup only removes provably dead code.
                 _ => {}
             }
         }

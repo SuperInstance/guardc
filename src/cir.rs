@@ -158,23 +158,71 @@ pub struct BufferId(pub u32);
 pub enum Expr {
     Const(ConstValue),
     Var(VarId),
-    Unary { op: UnOp, operand: Box<Expr>, ty: CirType },
-    Binary { op: BinOp, left: Box<Expr>, right: Box<Expr>, ty: CirType },
-    If { cond: Box<Expr>, then_branch: Box<Expr>, else_branch: Box<Expr>, ty: CirType },
+    Unary {
+        op: UnOp,
+        operand: Box<Expr>,
+        ty: CirType,
+    },
+    Binary {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+        ty: CirType,
+    },
+    If {
+        cond: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+        ty: CirType,
+    },
     // Array / record access
-    Index { array: VarId, index: Box<Expr>, ty: CirType },
-    Field { record: VarId, field: String, ty: CirType },
+    Index {
+        array: VarId,
+        index: Box<Expr>,
+        ty: CirType,
+    },
+    Field {
+        record: VarId,
+        field: String,
+        ty: CirType,
+    },
     // Quantified (retained in CIR; eliminated in lowering)
-    Forall { var: VarId, domain: Domain, body: Box<Expr>, ty: CirType },
-    Exists { var: VarId, domain: Domain, body: Box<Expr>, ty: CirType },
+    Forall {
+        var: VarId,
+        domain: Domain,
+        body: Box<Expr>,
+        ty: CirType,
+    },
+    Exists {
+        var: VarId,
+        domain: Domain,
+        body: Box<Expr>,
+        ty: CirType,
+    },
     // Temporal (retained in CIR; expanded to buffer ops in lowering)
     Always(Box<Expr>, CirType),
     Eventually(Box<Expr>, CirType),
     Next(Box<Expr>, CirType),
-    Until { left: Box<Expr>, right: Box<Expr>, ty: CirType },
-    Since { left: Box<Expr>, right: Box<Expr>, ty: CirType },
-    For { duration: usize, body: Box<Expr>, ty: CirType }, // duration in samples
-    After { duration: usize, body: Box<Expr>, ty: CirType },
+    Until {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        ty: CirType,
+    },
+    Since {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        ty: CirType,
+    },
+    For {
+        duration: usize,
+        body: Box<Expr>,
+        ty: CirType,
+    }, // duration in samples
+    After {
+        duration: usize,
+        body: Box<Expr>,
+        ty: CirType,
+    },
     Old(VarId, CirType),
     RateOf(VarId, CirType), // derivative: (x - old x) / dt
     Delta(VarId, CirType),  // x - old x
@@ -274,10 +322,7 @@ impl Expr {
         if !matches!(ty.kind, TypeKind::Boolean) {
             return Err(GuardError::Type {
                 span: Span::new("<cir>", 0, 0),
-                message: format!(
-                    "expected boolean expression, got {:?}",
-                    ty.kind
-                ),
+                message: format!("expected boolean expression, got {:?}", ty.kind),
             });
         }
         Ok(())
@@ -319,17 +364,17 @@ pub struct VarInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum VarKind {
-    State,      // Updated by host every cycle
-    Constant,   // Pre-loaded at boot
-    Temporal,   // History buffer reference
-    Local,      // Introduced by lowering
+    State,    // Updated by host every cycle
+    Constant, // Pre-loaded at boot
+    Temporal, // History buffer reference
+    Local,    // Introduced by lowering
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BufferInfo {
     pub name: String,
     pub var: VarId,
-    pub depth: usize, // number of historical samples retained
+    pub depth: usize,  // number of historical samples retained
     pub slot_base: u8, // FLUX memory slot for buffer head
 }
 
@@ -338,7 +383,13 @@ impl SymbolTable {
         Self::default()
     }
 
-    pub fn fresh_var(&mut self, name: impl Into<String>, ty: CirType, kind: VarKind, span: Span) -> VarId {
+    pub fn fresh_var(
+        &mut self,
+        name: impl Into<String>,
+        ty: CirType,
+        kind: VarKind,
+        span: Span,
+    ) -> VarId {
         let id = VarId(self.next_var);
         self.next_var += 1;
         self.vars.insert(
@@ -353,7 +404,13 @@ impl SymbolTable {
         id
     }
 
-    pub fn fresh_buffer(&mut self, name: impl Into<String>, var: VarId, depth: usize, slot_base: u8) -> BufferId {
+    pub fn fresh_buffer(
+        &mut self,
+        name: impl Into<String>,
+        var: VarId,
+        depth: usize,
+        slot_base: u8,
+    ) -> BufferId {
         let id = BufferId(self.next_buffer);
         self.next_buffer += 1;
         self.buffers.insert(
@@ -377,8 +434,8 @@ impl SymbolTable {
 pub struct CirInvariant {
     pub name: String,
     pub priority: Priority,
-    pub when: Option<Expr>,   // guard condition
-    pub ensure: Expr,         // boolean constraint
+    pub when: Option<Expr>, // guard condition
+    pub ensure: Expr,       // boolean constraint
     pub on_violation: ViolationAction,
     pub source_span: Span,
 }

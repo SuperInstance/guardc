@@ -67,8 +67,8 @@ pub fn compile(module: &crate::cir::CirModule, source_text: &str) -> Result<Comp
     // Phase 4: Proof certificate generation
     let proof_gen = ProofGen::new(module, source_text, &bytecode_bytes);
     let certificate = proof_gen.generate()?;
-    let certificate_json =
-        serde_json::to_string_pretty(&certificate).map_err(|e| GuardError::Validation(e.to_string()))?;
+    let certificate_json = serde_json::to_string_pretty(&certificate)
+        .map_err(|e| GuardError::Validation(e.to_string()))?;
 
     let source_hash = sha256_hex(source_text.as_bytes());
 

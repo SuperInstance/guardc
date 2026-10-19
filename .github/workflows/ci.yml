@@ -14,7 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --lib
+      # `--lib` alone compiled and ran zero tests, and never built or ran
+      # anything in tests/ -- so the integration suite was dead code as far as
+      # CI was concerned. `--all-targets` covers the lib, the bins and every
+      # integration test target, which is where the certificate tests live.
+      - run: cargo test --all-targets
       - run: cargo test --doc
 
   clippy:

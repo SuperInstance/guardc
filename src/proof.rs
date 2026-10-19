@@ -48,6 +48,13 @@ pub struct ProofBlock {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofStatus {
+    /// Nothing was verified, because nothing ran.
+    ///
+    /// `guardc` compiles GUARD to FLUX bytecode. It runs no SMT solver and it
+    /// never runs the FLUX VM, so there is no execution trace to seal against
+    /// and no VC to discharge. This is the only status any block can honestly
+    /// carry today, so it is what `generate` emits.
+    NotSealed,
     Verified,
     Bounded,
     Runtime,
@@ -61,6 +68,10 @@ pub struct Obligation {
     pub name: String,
     pub source_span: String,
     pub vc: VerificationCondition,
+    /// Named `trace_digest` for historical reasons. It is **not** a trace
+    /// digest: `guardc` compiles and does not execute, so there is no trace.
+    /// It carries `obligation:<sha256>` over this obligation -- see
+    /// [`obligation_digest`].
     pub trace_digest: String,
     pub counterexample: Option<Counterexample>,
 }
@@ -75,6 +86,27 @@ pub enum ObligationKind {
     TemporalSafety,
     UnitConsistency,
     DomainMembership,
+}
+
+impl ObligationKind {
+    /// The stable tag hashed into the obligation digest.
+    ///
+    /// This must stay byte-identical to the name serde emits, because an
+    /// independent verifier re-derives the digest from the certificate's JSON.
+    /// The match is exhaustive on purpose: adding a variant has to be a
+    /// deliberate decision about its tag rather than a silent default, and the
+    /// `kind_tag_matches_the_serialized_kind` test checks the two agree.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::InvariantPreservation => "invariant_preservation",
+            Self::InvariantInitiation => "invariant_initiation",
+            Self::DerivedRuleSanity => "derived_rule_sanity",
+            Self::TemporalLiveness => "temporal_liveness",
+            Self::TemporalSafety => "temporal_safety",
+            Self::UnitConsistency => "unit_consistency",
+            Self::DomainMembership => "domain_membership",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -138,7 +170,10 @@ impl<'a> ProofGen<'a> {
             proofs.push(ProofBlock {
                 proof_id: proof_cfg.name.clone(),
                 tactics: proof_cfg.tactics.clone(),
-                status: ProofStatus::Verified, // Placeholder: real solver integration needed
+                // No solver ran and no VM executed, so nothing was verified and
+                // there is no trace to seal against. `Verified` would be a lie
+                // the moment it was serialized.
+                status: ProofStatus::NotSealed,
                 verification_time_ms: 0,
                 obligations,
                 merkle_root,
@@ -171,36 +206,50 @@ impl<'a> ProofGen<'a> {
 
         for inv in &self.module.invariants {
             id += 1;
+            let obligation_id = format!("inv-{id:02}");
+            let kind = ObligationKind::InvariantPreservation;
+            let name = inv.name.clone();
+            let source_span = format!("{}", inv.source_span);
+            let logic = select_logic(&inv.ensure);
             let formula = expr_to_smt(&inv.ensure, &self.module.symbol_table)?;
+            let trace_digest =
+                obligation_digest(&obligation_id, &kind, &name, &source_span, &logic, &formula);
             obligations.push(Obligation {
-                obligation_id: format!("inv-{id:02}"),
-                kind: ObligationKind::InvariantPreservation,
-                name: inv.name.clone(),
-                source_span: format!("{}", inv.source_span),
+                obligation_id,
+                kind,
+                name,
+                source_span,
                 vc: VerificationCondition {
-                    logic: select_logic(&inv.ensure),
+                    logic,
                     formula,
                     status: VcStatus::Sat, // Placeholder
                 },
-                trace_digest: sha256_hex(b"placeholder"),
+                trace_digest,
                 counterexample: None,
             });
         }
 
         for der in &self.module.derived {
             id += 1;
+            let obligation_id = format!("der-{id:02}");
+            let kind = ObligationKind::DerivedRuleSanity;
+            let name = der.name.clone();
+            let source_span = format!("{}", der.source_span);
+            let logic = select_logic(&der.conclude);
             let formula = expr_to_smt(&der.conclude, &self.module.symbol_table)?;
+            let trace_digest =
+                obligation_digest(&obligation_id, &kind, &name, &source_span, &logic, &formula);
             obligations.push(Obligation {
-                obligation_id: format!("der-{id:02}"),
-                kind: ObligationKind::DerivedRuleSanity,
-                name: der.name.clone(),
-                source_span: format!("{}", der.source_span),
+                obligation_id,
+                kind,
+                name,
+                source_span,
                 vc: VerificationCondition {
-                    logic: select_logic(&der.conclude),
+                    logic,
                     formula,
                     status: VcStatus::Sat,
                 },
-                trace_digest: sha256_hex(b"placeholder"),
+                trace_digest,
                 counterexample: None,
             });
         }
@@ -371,6 +420,47 @@ fn compute_merkle_root(obligations: &[Obligation]) -> String {
     }
 
     format!("sha256:{}", bytes_to_hex(&current[0]))
+}
+
+/// The digest an obligation is sealed with: `obligation:<sha256>` over the
+/// fields this VC was actually built from.
+///
+/// This binds the obligation, so two different obligations seal differently.
+/// It used to be `sha256_hex(b"placeholder")` -- a constant -- so every
+/// obligation in every certificate ever emitted carried the same value.
+///
+/// Each field is written length-prefixed (8-byte big-endian length, then the
+/// bytes). The prefixes are load-bearing: without them `("ab", "c")` and
+/// `("a", "bc")` concatenate to identical bytes, so two genuinely different
+/// field splits would still seal identically.
+///
+/// The `obligation:` prefix is deliberate. `guardc` compiles and does not
+/// execute, so there is no trace to digest; the tag stops a reader mistaking
+/// this for a trace digest. The field name is historical.
+///
+/// This is public because it is the certificate's re-derivable commitment: a
+/// verifier that does not trust `guardc` has to be able to recompute it.
+pub fn obligation_digest(
+    obligation_id: &str,
+    kind: &ObligationKind,
+    name: &str,
+    source_span: &str,
+    logic: &str,
+    formula: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    for field in [
+        obligation_id,
+        kind.as_str(),
+        name,
+        source_span,
+        logic,
+        formula,
+    ] {
+        hasher.update((field.len() as u64).to_be_bytes());
+        hasher.update(field.as_bytes());
+    }
+    format!("obligation:{}", bytes_to_hex(&hasher.finalize()))
 }
 
 fn sha256_hex(data: &[u8]) -> String {

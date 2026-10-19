@@ -116,6 +116,19 @@ pub struct VerificationCondition {
     pub status: VcStatus,
 }
 
+/// What a solver said about a VC.
+///
+/// Note the direction, because it is the opposite of what a safety proof
+/// wants and it is easy to read backwards:
+///
+/// - [`VcStatus::Unsat`] -- the formula is **unsatisfiable**, so no state
+///   violates it. **This is the only variant that means the property holds.**
+/// - [`VcStatus::Sat`] -- the formula is **satisfiable**, so a counterexample
+///   exists. This means the property **failed**.
+/// - [`VcStatus::Unknown`] -- not determined. Nobody ran a solver.
+///
+/// `guardc` runs no solver (`Cargo.toml` has no Z3, cvc5 or Bitwuzla) and
+/// never runs the FLUX VM, so it only ever emits `Unknown`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum VcStatus {
@@ -222,7 +235,11 @@ impl<'a> ProofGen<'a> {
                 vc: VerificationCondition {
                     logic,
                     formula,
-                    status: VcStatus::Sat, // Placeholder
+                    // No solver ran, so nothing was determined. `Sat` would be
+                    // the opposite claim: it says the constraint is
+                    // satisfiable, i.e. a counterexample exists, i.e. this
+                    // property FAILED.
+                    status: VcStatus::Unknown,
                 },
                 trace_digest,
                 counterexample: None,
@@ -247,7 +264,7 @@ impl<'a> ProofGen<'a> {
                 vc: VerificationCondition {
                     logic,
                     formula,
-                    status: VcStatus::Sat,
+                    status: VcStatus::Unknown,
                 },
                 trace_digest,
                 counterexample: None,

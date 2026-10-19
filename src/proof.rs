@@ -52,6 +52,13 @@ pub enum ProofStatus {
     Bounded,
     Runtime,
     Failed,
+    /// The obligations were GENERATED but not sealed: the compiler does not
+    /// run the solver, so there is no execution trace to hash and nothing was
+    /// proved. A certificate that says `verified` here is a claim the code
+    /// cannot support.
+    ///
+    /// **The absence of a backend is a REFUSAL, not a pass.**
+    NotSealed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -138,7 +145,9 @@ impl<'a> ProofGen<'a> {
             proofs.push(ProofBlock {
                 proof_id: proof_cfg.name.clone(),
                 tactics: proof_cfg.tactics.clone(),
-                status: ProofStatus::Verified, // Placeholder: real solver integration needed
+                // The solver is not run, so nothing was proved. Saying
+                // `Verified` here was a claim the code could not support.
+                status: ProofStatus::NotSealed,
                 verification_time_ms: 0,
                 obligations,
                 merkle_root,
@@ -172,37 +181,54 @@ impl<'a> ProofGen<'a> {
         for inv in &self.module.invariants {
             id += 1;
             let formula = expr_to_smt(&inv.ensure, &self.module.symbol_table)?;
-            obligations.push(Obligation {
-                obligation_id: format!("inv-{id:02}"),
+            let obligation_id = format!("inv-{id:02}");
+            let name = inv.name.clone();
+            let source_span = format!("{}", inv.source_span);
+            let vc = VerificationCondition {
+                logic: select_logic(&inv.ensure),
+                formula,
+                // The solver is not run, so the VC's satisfiability is
+                // UNKNOWN, not Sat. `Sat` is the opposite of what a safety
+                // proof wants.
+                status: VcStatus::Unknown,
+            };
+            // The seal is computed FROM this obligation and then carried on
+            // it, so the two cannot drift apart.
+            let mut obligation = Obligation {
+                obligation_id,
                 kind: ObligationKind::InvariantPreservation,
-                name: inv.name.clone(),
-                source_span: format!("{}", inv.source_span),
-                vc: VerificationCondition {
-                    logic: select_logic(&inv.ensure),
-                    formula,
-                    status: VcStatus::Sat, // Placeholder
-                },
-                trace_digest: sha256_hex(b"placeholder"),
+                name,
+                source_span,
+                vc,
+                trace_digest: String::new(),
                 counterexample: None,
-            });
+            };
+            obligation.trace_digest = obligation_digest(&obligation);
+            obligations.push(obligation);
         }
 
         for der in &self.module.derived {
             id += 1;
             let formula = expr_to_smt(&der.conclude, &self.module.symbol_table)?;
-            obligations.push(Obligation {
-                obligation_id: format!("der-{id:02}"),
+            let obligation_id = format!("der-{id:02}");
+            let name = der.name.clone();
+            let source_span = format!("{}", der.source_span);
+            let vc = VerificationCondition {
+                logic: select_logic(&der.conclude),
+                formula,
+                status: VcStatus::Unknown,
+            };
+            let mut obligation = Obligation {
+                obligation_id,
                 kind: ObligationKind::DerivedRuleSanity,
-                name: der.name.clone(),
-                source_span: format!("{}", der.source_span),
-                vc: VerificationCondition {
-                    logic: select_logic(&der.conclude),
-                    formula,
-                    status: VcStatus::Sat,
-                },
-                trace_digest: sha256_hex(b"placeholder"),
+                name,
+                source_span,
+                vc,
+                trace_digest: String::new(),
                 counterexample: None,
-            });
+            };
+            obligation.trace_digest = obligation_digest(&obligation);
+            obligations.push(obligation);
         }
 
         Ok(obligations)
@@ -343,13 +369,52 @@ fn expr_to_smt(expr: &Expr, _symtab: &crate::cir::SymbolTable) -> Result<String>
 // Merkle Tree
 // ---------------------------------------------------------------------------
 
+/// The digest an obligation carries.
+///
+/// **IT BINDS THE OBLIGATION.** The previous implementation hashed the
+/// literal bytes `placeholder` for EVERY obligation, so two different
+/// obligations sealed identically, the merkle root over them was a
+/// constant, and the seal certified nothing at all.
+///
+/// The parts are LENGTH-PREFIXED, so a field boundary cannot be moved:
+/// ("ab", "c") and ("a", "bc") must not produce the same preimage.
+///
+/// **WHAT IT DOES NOT BIND: the execution trace.** The compiler does not run
+/// the solver, so there IS no trace to hash -- and a digest that claimed to
+/// cover one would be a claim rather than a measurement. That is what
+/// `ProofStatus::NotSealed` says.
+fn obligation_digest(o: &Obligation) -> String {
+    // A STABLE rendering of the kind, not a Debug one: `{:?}` would change
+    // with the shape of the enum and silently re-seal every obligation.
+    let kind = serde_json::to_string(&o.kind).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    for part in [
+        o.obligation_id.as_str(),
+        kind.as_str(),
+        o.name.as_str(),
+        o.source_span.as_str(),
+        o.vc.logic.as_str(),
+        o.vc.formula.as_str(),
+    ] {
+        hasher.update((part.len() as u64).to_le_bytes());
+        hasher.update(part.as_bytes());
+    }
+    bytes_to_hex(&hasher.finalize())
+}
+
 fn compute_merkle_root(obligations: &[Obligation]) -> String {
     let leaves: Vec<Vec<u8>> = obligations
         .iter()
         .map(|o| {
             let mut hasher = Sha256::new();
             hasher.update(o.obligation_id.as_bytes());
-            hasher.update(o.trace_digest.as_bytes());
+            // RECOMPUTE the digest from the obligation; do NOT trust the
+            // stored field. The stored `trace_digest` is a RECEIPT of what
+            // was sealed -- the root has to be bound to the OBLIGATION.
+            // Trusting the field means a stale or empty digest yields a
+            // root that ignores the obligation's content entirely, which
+            // is exactly what the `placeholder` digest did.
+            hasher.update(obligation_digest(o).as_bytes());
             hasher.finalize().to_vec()
         })
         .collect();
@@ -406,4 +471,116 @@ fn format_iso_now() -> String {
         mins,
         secs
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn obligation(id: &str, name: &str, span: &str) -> Obligation {
+        Obligation {
+            obligation_id: id.to_string(),
+            kind: ObligationKind::InvariantPreservation,
+            name: name.to_string(),
+            source_span: span.to_string(),
+            vc: VerificationCondition {
+                logic: "QF_LIA".to_string(),
+                formula: "(> (+ (abs_height) 0) (+ (abs_height) 0))".to_string(),
+                status: VcStatus::Unknown,
+            },
+            trace_digest: String::new(),
+            counterexample: None,
+        }
+    }
+
+    /// **THE SEAL MUST BIND THE OBLIGATION.** The previous implementation
+    /// returned `sha256_hex(b"placeholder")` for every obligation, so this
+    /// property was FALSE: two different obligations sealed identically, and
+    /// the merkle root over them was a constant.
+    #[test]
+    fn two_different_obligations_seal_differently() {
+        let a = obligation("inv-01", "abs_height_nonneg", "sheets/a.yaml:1:1");
+        let b = obligation("inv-02", "abs_height_nonneg", "sheets/a.yaml:2:1");
+        assert_ne!(
+            obligation_digest(&a),
+            obligation_digest(&b),
+            "two different obligations produced the same seal -- the seal binds nothing"
+        );
+    }
+
+    #[test]
+    fn the_same_obligation_seals_the_same() {
+        let a = obligation("inv-01", "abs_height_nonneg", "sheets/a.yaml:1:1");
+        let b = obligation("inv-01", "abs_height_nonneg", "sheets/a.yaml:1:1");
+        assert_eq!(
+            obligation_digest(&a),
+            obligation_digest(&b),
+            "the seal is not deterministic"
+        );
+    }
+
+    /// **THE LENGTH PREFIX MATTERS.** Without it, ("ab", "c") and ("a", "bc")
+    /// produce the same preimage, and a field boundary can be moved.
+    #[test]
+    fn a_field_boundary_cannot_be_moved() {
+        let a = obligation("ab", "c", "x");
+        let b = obligation("a", "bc", "x");
+        assert_ne!(
+            obligation_digest(&a),
+            obligation_digest(&b),
+            "a field boundary was not encoded"
+        );
+    }
+
+    /// THE ROOT FOLLOWS THE OBLIGATION, NOT THE STORED DIGEST. The stored
+    /// `trace_digest` is a RECEIPT of what was sealed; the root must be
+    /// bound to the content. A stale or empty digest must not change it.
+    #[test]
+    fn the_root_follows_the_obligation_not_the_stored_digest() {
+        let mut o = obligation("inv-01", "a", "s1");
+        o.trace_digest = "deadbeef".to_string();
+        let a = compute_merkle_root(&[o.clone()]);
+        o.trace_digest = String::new();
+        let b = compute_merkle_root(&[o]);
+        assert_eq!(
+            a, b,
+            "the merkle root trusted the stored digest instead of the obligation"
+        );
+    }
+
+    /// EVERY FIELD IS BOUND. Change one and the seal changes.
+    #[test]
+    fn every_part_of_the_obligation_is_bound() {
+        let base = obligation("inv-01", "n", "s");
+        let mut other = base.clone();
+        other.name = "n2".to_string();
+        assert_ne!(obligation_digest(&base), obligation_digest(&other));
+        let mut other = base.clone();
+        other.source_span = "t".to_string();
+        assert_ne!(obligation_digest(&base), obligation_digest(&other));
+        let mut other = base.clone();
+        other.vc.formula = "different".to_string();
+        assert_ne!(obligation_digest(&base), obligation_digest(&other));
+        let mut other = base.clone();
+        other.vc.logic = "QF_NIA".to_string();
+        assert_ne!(obligation_digest(&base), obligation_digest(&other));
+        let mut other = base.clone();
+        other.kind = ObligationKind::DerivedRuleSanity;
+        assert_ne!(obligation_digest(&base), obligation_digest(&other));
+    }
+
+    /// THE MERKLE ROOT OVER THE OBLIGATIONS IS NOT A CONSTANT.
+    #[test]
+    fn the_merkle_root_over_distinct_obligations_is_not_constant() {
+        let obs = vec![
+            obligation("inv-01", "a", "s1"),
+            obligation("inv-02", "b", "s2"),
+        ];
+        let one = compute_merkle_root(&obs);
+        let two = compute_merkle_root(&[
+            obligation("inv-01", "a", "s1"),
+            obligation("inv-02", "B", "s2"),
+        ]);
+        assert_ne!(one, two, "the merkle root ignored its leaves");
+    }
 }

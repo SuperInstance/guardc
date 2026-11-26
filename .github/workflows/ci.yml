@@ -14,7 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --lib
+      # THE TEST JOB WAS A NO-OP. `cargo test --lib` collected 0 tests and
+      # `cargo test --doc` collected 0 tests, and NEITHER ever executed
+      # `tests/integration.rs` or `tests/lcir_validate.rs` -- so the job
+      # passed over an empty suite. It was green because it ran nothing.
+      #
+      # `--all-targets` runs the lib's unit tests, EVERY integration test
+      # file, and the examples. `--doc` is separate, because `--all-targets`
+      # does not run doc tests.
+      - run: cargo test --all-targets
       - run: cargo test --doc
 
   clippy:
